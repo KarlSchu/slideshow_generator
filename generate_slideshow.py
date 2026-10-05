@@ -31,6 +31,7 @@ Tasks:
 """
 import argparse
 import datetime
+import errno
 import http.server
 import io
 import json
@@ -288,13 +289,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   #nextBtn { right: 20px; }
   #resizer { flex: 0 0 6px; width: 6px; cursor: col-resize; background: #222; }
   #resizer:hover, #resizer.resizing { background: #2d6cdf; }
-  #index { flex: 0 0 auto; width: 220px; min-width: 180px; max-width: 50vw; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px; box-sizing: border-box; }
-  #index h3 { margin: 0 0 10px; font-size: 14px; }
-  #indexHeader { position: sticky; top: -10px; z-index: 2; background: #111; margin: -10px -10px 0; padding: 10px 10px 0; }
-  #saveBtn { width: 100%; padding: 8px; margin-bottom: 10px; background: #2d6cdf; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-  #saveBtn:hover { background: #1e56b8; }
-  #reloadBtn, #exportBtn { width: 100%; padding: 8px; margin-bottom: 10px; background: #3a3a3a; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-  #reloadBtn:hover, #exportBtn:hover { background: #505050; }
+  #index { flex: 0 0 auto; width: 220px; min-width: 180px; max-width: 50vw; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 10px; box-sizing: border-box; }
+  #index h3 { margin: 0 0 8px; font-size: 14px; }
+  #indexHeader { flex: 0 0 auto; background: #111; }
+  #thumbs { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+  #indexButtons { display: flex; gap: 4px; margin-bottom: 6px; }
+  #indexButtons button { flex: 1 1 0; min-width: 0; padding: 4px 2px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #3a3a3a; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  #indexButtons button:hover { background: #505050; }
+  #saveBtn { background: #2d6cdf !important; }
+  #saveBtn:hover { background: #1e56b8 !important; }
   #saveStatus { font-size: 12px; min-height: 16px; margin-bottom: 8px; opacity: .8; }
   .thumb { display: flex; align-items: center; gap: 8px; padding: 4px; margin-bottom: 4px; background: #1c1c1c; border-radius: 4px; cursor: grab; border: 2px solid transparent; }
   .thumb.active { border-color: #2d6cdf; }
@@ -333,9 +336,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div id="index">
     <div id="indexHeader">
       <h3>Index (drag to reorder)</h3>
-      <button id="reloadBtn" type="button">Reload Media Files</button>
-      <button id="saveBtn">Save Text and Order</button>
-      <button id="exportBtn">Export ZIP (static + media)</button>
+      <div id="indexButtons">
+        <button id="reloadBtn" type="button" aria-label="Reload" title="Reload: rescan the slides folder; keeps current order and captions, drops missing files and appends newly added files (not saved until you click Save)">&#8635; Reload</button>
+        <button id="saveBtn" type="button" aria-label="Save" title="Save: write the current order and captions to slides.md (a timestamped backup of the existing slides.md is made first)">&#128190; Save</button>
+        <button id="exportBtn" type="button" aria-label="Export" title="Export: download a ZIP containing a standalone read-only index.html plus all referenced media files">&#11015; Export</button>
+      </div>
       <div id="saveStatus"></div>
     </div>
     <div id="thumbs"></div>
@@ -1197,8 +1202,21 @@ def make_handler(directory, slides_dir):
 
 
 def serve(directory, slides_dir, port):
+    if not 1 <= port <= 65535:
+        print(f"Error: invalid port {port}. Use a number between 1 and 65535.", file=sys.stderr)
+        sys.exit(1)
     handler = make_handler(directory, slides_dir)
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+    try:
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+    except OSError as err:
+        reasons = {
+            errno.EADDRINUSE: "it is already in use by another program (maybe a previous slideshow server is still running)",
+            errno.EACCES: "permission denied (ports below 1024 usually need administrator rights)",
+        }
+        reason = reasons.get(err.errno, err.strerror or str(err))
+        print(f"Error: cannot start the server on port {port}: {reason}.", file=sys.stderr)
+        print(f"Try a different port, e.g.: python3 generate_slideshow.py --port {port + 1 if port < 65535 else 8000}", file=sys.stderr)
+        sys.exit(1)
     url = f"http://127.0.0.1:{port}/{EDITABLE_HTML_FILENAME}"
     print(f"Serving {directory} at {url} (Ctrl+C to stop)")
     threading.Timer(0.5, lambda: webbrowser.open(url)).start()
