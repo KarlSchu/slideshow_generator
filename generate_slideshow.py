@@ -55,6 +55,49 @@ HTML_FILENAME = "slideshow.html"
 IMAGE_LINE_RE = re.compile(r"^!\[(?P<alt>.*)\]\(\s*(?P<name>.+?)\s*\)\s*$")
 
 
+WEB_MAX_DIMENSION = 1920
+WEB_JPEG_QUALITY = 82
+WEB_OPTIMIZE_EXTS = {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".bmp"}
+
+
+def optimize_image_for_web(path):
+    """Return image bytes downscaled (max 1920px) and recompressed for web display.
+
+    Keeps the original format/extension. Returns the original bytes when Pillow is
+    unavailable, the format isn't optimizable (e.g. GIF/SVG/animated), or the result
+    isn't smaller.
+    """
+    with open(path, "rb") as f:
+        original = f.read()
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in WEB_OPTIMIZE_EXTS:
+        return original
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return original
+    try:
+        with Image.open(io.BytesIO(original)) as img:
+            if getattr(img, "is_animated", False):
+                return original
+            fmt = img.format
+            img = ImageOps.exif_transpose(img)
+            img.thumbnail((WEB_MAX_DIMENSION, WEB_MAX_DIMENSION), Image.LANCZOS)
+            out = io.BytesIO()
+            if fmt == "JPEG":
+                img.convert("RGB").save(out, "JPEG", quality=WEB_JPEG_QUALITY, optimize=True, progressive=True)
+            elif fmt == "PNG":
+                img.save(out, "PNG", optimize=True)
+            elif fmt == "WEBP":
+                img.save(out, "WEBP", quality=WEB_JPEG_QUALITY)
+            else:
+                return original
+    except Exception:
+        return original
+    data = out.getvalue()
+    return data if len(data) < len(original) else original
+
+
 def find_images(directory):
     names = []
     for entry in os.listdir(directory):
@@ -1189,7 +1232,11 @@ def make_handler(directory, slides_dir):
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr(HTML_FILENAME, static_html)
                 for name in image_names:
-                    zf.write(os.path.join(slides_dir, name), arcname=name)
+                    src = os.path.join(slides_dir, name)
+                    if os.path.splitext(name)[1].lower() in WEB_OPTIMIZE_EXTS:
+                        zf.writestr(name, optimize_image_for_web(src))
+                    else:
+                        zf.write(src, arcname=name)
             zip_bytes = buffer.getvalue()
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
