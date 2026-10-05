@@ -33,14 +33,22 @@
   #resizer { flex: 0 0 6px; width: 6px; cursor: col-resize; background: #222; }
   #resizer:hover, #resizer.resizing { background: #2d6cdf; }
   #index { flex: 0 0 auto; width: 220px; min-width: 180px; max-width: 50vw; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px; box-sizing: border-box; }
-  #index h3 { position: sticky; top: -10px; z-index: 2; background: #111; margin: -10px -10px 10px; padding: 10px 10px 0; font-size: 14px; }
-  .thumb { display: flex; align-items: center; gap: 8px; padding: 4px; margin-bottom: 4px; background: #1c1c1c; border-radius: 4px; cursor: pointer; border: 2px solid transparent; }
+  #index h3 { margin: 0 0 10px; font-size: 14px; }
+  #indexHeader { position: sticky; top: -10px; z-index: 2; background: #111; margin: -10px -10px 0; padding: 10px 10px 0; }
+  #saveBtn { width: 100%; padding: 8px; margin-bottom: 10px; background: #2d6cdf; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  #saveBtn:hover { background: #1e56b8; }
+  #reloadBtn, #exportBtn { width: 100%; padding: 8px; margin-bottom: 10px; background: #3a3a3a; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  #reloadBtn:hover, #exportBtn:hover { background: #505050; }
+  #saveStatus { font-size: 12px; min-height: 16px; margin-bottom: 8px; opacity: .8; }
+  .thumb { display: flex; align-items: center; gap: 8px; padding: 4px; margin-bottom: 4px; background: #1c1c1c; border-radius: 4px; cursor: grab; border: 2px solid transparent; }
   .thumb.active { border-color: #2d6cdf; }
+  .thumb.dragging { opacity: .4; }
   .thumb img, .thumb video { width: 48px; height: 36px; object-fit: cover; border-radius: 2px; flex-shrink: 0; }
   .thumb .thumb-icon { width: 48px; height: 36px; border-radius: 2px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #262626; font-size: 18px; }
   .subtitle { padding: 10px 4px 4px; color: #8fb3e8; font-size: 12px; font-weight: 600; }
   .thumb .num { width: 20px; font-size: 11px; opacity: .6; flex-shrink: 0; }
-  .thumb .name { flex: 1; min-width: 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumb .name { flex: 1; min-width: 0; font-size: 11px; background: transparent; border: 1px solid transparent; border-radius: 2px; color: inherit; font-family: inherit; padding: 2px 4px; }
+  .thumb .name:hover, .thumb .name:focus { border-color: #444; background: #262626; }
 </style>
 </head>
 <body>
@@ -67,19 +75,26 @@
   </dialog>
   <div id="resizer"></div>
   <div id="index">
-    <h3>Index</h3>
+    <div id="indexHeader">
+      <h3>Index (drag to reorder)</h3>
+      <button id="reloadBtn" type="button">Reload Media Files</button>
+      <button id="saveBtn">Save Text and Order</button>
+      <button id="exportBtn">Export ZIP (static + media)</button>
+      <div id="saveStatus"></div>
+    </div>
     <div id="thumbs"></div>
   </div>
 
 <script>
-const MEDIA_BASE = "";
+const MEDIA_BASE = "slides/";
 const VIDEO_EXTS = [".mp4"];
 const isVideoName = (name) => VIDEO_EXTS.some((ext) => name.toLowerCase().endsWith(ext));
 const isDocumentName = (name) => /\.(pdf|md)$/i.test(name);
 const mediaSrc = (name) => MEDIA_BASE + encodeURIComponent(name);
-const entries = [{"type": "image", "name": "175-signal-2024-09-21-153424_002.mp4", "comment": "", "metadata": {"File": "175-signal-2024-09-21-153424_002.mp4", "File size": "2,094,693 bytes"}}, {"type": "image", "name": "190-signal-2024-09-24-193554_002.png", "comment": "", "metadata": {"File": "190-signal-2024-09-24-193554_002.png", "File size": "46,758 bytes"}}, {"type": "image", "name": "sample-apng.apng", "comment": "", "metadata": {"File": "sample-apng.apng", "File size": "61,968 bytes"}}, {"type": "image", "name": "sample-avif.avif", "comment": "", "metadata": {"File": "sample-avif.avif", "File size": "80,743 bytes"}}, {"type": "image", "name": "sample-bmp.bmp", "comment": "", "metadata": {"File": "sample-bmp.bmp", "File size": "818,058 bytes"}}, {"type": "image", "name": "sample-gif.gif", "comment": "", "metadata": {"File": "sample-gif.gif", "File size": "308,156 bytes"}}, {"type": "image", "name": "sample-ico.ico", "comment": "", "metadata": {"File": "sample-ico.ico", "File size": "15,086 bytes"}}, {"type": "image", "name": "sample-jfif.jfif", "comment": "", "metadata": {"File": "sample-jfif.jfif", "File size": "88,316 bytes"}}, {"type": "image", "name": "sample-jpeg.jpeg", "comment": "", "metadata": {"File": "sample-jpeg.jpeg", "File size": "257,056 bytes"}}, {"type": "image", "name": "sample-jpg.jpg", "comment": "", "metadata": {"File": "sample-jpg.jpg", "File size": "36,287 bytes"}}, {"type": "image", "name": "sample-mp4.mp4", "comment": "", "metadata": {"File": "sample-mp4.mp4", "File size": "991,017 bytes"}}, {"type": "image", "name": "sample-png.png", "comment": "", "metadata": {"File": "sample-png.png", "File size": "224,566 bytes"}}, {"type": "image", "name": "sample-svg.svg", "comment": "", "metadata": {"File": "sample-svg.svg", "File size": "4,019 bytes"}}, {"type": "image", "name": "sample-webp.webp", "comment": "", "metadata": {"File": "sample-webp.webp", "File size": "30,320 bytes"}}, {"type": "image", "name": "test.md", "comment": "", "markdown": "# Slideshow Generator\n\nGenerate and browse an ordered slideshow from image, video, and document files in a project's `slides/` folder. The generator maintains a Markdown slide list, an editable browser view, and a standalone read-only view.\n\n## Requirements\n\n- Python 3. No third-party Python packages are needed for generation or serving.\n- A modern web browser to view the slideshow. Actual playback depends on browser support for the selected media format and codec.\n- Optional: [Pillow](https://python-pillow.org/) for image dimensions and EXIF metadata.\n- Optional: `ffmpeg` and `ffprobe` on `PATH` to check and re-encode MP4 video codecs.\n\n```mermaid\nflowchart LR\nA --> B\nB --> C\nA --> C\n```\n\n## Project Layout\n\nRun the script from a project folder containing `slides/`:\n\n```text\nmy-slideshow/\n\u251c\u2500\u2500 generate_slideshow.py\n\u251c\u2500\u2500 slides.md (generated by the script)\n\u251c\u2500\u2500 slideshow-gen.html (generated and used by the script)\n\u2514\u2500\u2500 slides/\n    \u251c\u2500\u2500 photo.jpg\n    \u251c\u2500\u2500 clip.mp4\n    \u2514\u2500\u2500 index.html (generated by the script)\n```\n\nPut media directly in `slides/`; files in nested folders are not scanned. The generator does not create this folder, so create it before the first run. It recognizes these filename extensions (case-insensitive):\n\n**Images:** `.png`, `.apng`, `.jpg`, `.jpeg`, `.jfif`, `.gif`, `.webp`, `.avif`, `.bmp`, `.ico`, `.svg`  \n**Video:** `.mp4`\u003cbr>\n**Documents:** `.pdf`, `.md` (`slides.md` is excluded)\n\nPDFs and Markdown files are shown in an embedded browser document view. Extension recognition does not guarantee that every browser can display or play a file. For widest MP4 browser compatibility, use H.264 video and AAC audio.\n\n## Generate and View\n\nFrom the project folder, run:\n\n```console\npython generate_slideshow.py\n```\n\nThe script updates or creates `slides.md`, writes the editable `slideshow-gen.html` in the project folder and writes the read-only `slides/index.html` beside the media. By default it starts a local server at `http://127.0.0.1:8000/slideshow-gen.html` and opens the editable view in your browser. Stop the server with Ctrl+C.\n\nOptions:\n\n```console\npython generate_slideshow.py --help\npython generate_slideshow.py --no-serve\npython generate_slideshow.py --serve-only\npython generate_slideshow.py --dir path/to/project --port 8080\npython generate_slideshow.py --fix-videos\n```\n\n- `--dir DIR`: use a project folder other than the current directory. It must contain `slides/`.\n- `--port PORT`: choose the local HTTP server port (default `8000`).\n- `--no-serve`: generate/update the list and both HTML files, then exit.\n- `--serve-only`: serve existing `slides.md` and `slideshow-gen.html` without regenerating them. The project must also contain `slides/`.\n- `--fix-videos`: before generation/serving, re-encode MP4 files that are not H.264 to H.264/AAC. Requires `ffmpeg` and `ffprobe`; the original is kept as a `.bak` file. Review the backup and converted file before deleting anything.\n\nTo view the standalone, read-only version, open `slides/index.html`. It references the media files next to it, so keep the HTML and its slide files together. The editable page should be used through the local server; its save and ZIP export actions require that server.\n\n## Slide Order and Captions\n\n`slides.md` determines the slide order. On the first run, media files are added in case-insensitive filename order. Subsequent runs preserve listed order and captions, remove entries for files no longer found, and append newly discovered files. Reorder entries in the Markdown file directly or use the editable page's drag-and-drop index.\n\nUse Markdown image lines for slides and headings for section labels:\n\n```markdown\n# First section\n![Opening view](photo.jpg)\n![A short clip](clip.mp4)\n## Details\n![Second view](diagram.svg)\n![Notes](notes.md)\n![Handout](handout.pdf)\n```\n\nCaptions are editable in the index. Separate caption lines with `\u003cbr>` if desired. Clicking **Save Text and Order** writes the edits to `slides.md`; if the file already exists, a timestamped `slides_YYYYMMDD_HHMMSS.md` backup is made first. Other unrecognized lines in `slides.md` are retained but ignored by the slideshow.\n\nThe editable view supports keyboard left/right navigation, zoom and pan for still images, and a ZIP export containing a standalone `index.html` plus the referenced media. The read-only view is suitable for browsing or copying with its media files; it has no save or export controls.\n\n## Sample Media\n\nThe repository's `slides/` folder includes samples for the supported formats. Their sources are listed here; review each source's license and attribution requirements before redistributing the files or publishing a slideshow.\n\n| File               | Source                                    |\n| ------------------ | ----------------------------------------- |\n| `sample-png.png`   | Wikimedia, PNG transparency demonstration |\n| `sample-apng.apng` | Wikimedia, animated beach ball            |\n| `sample-jpg.jpg`   | Wikimedia, JPEG flower example            |\n| `sample-jpeg.jpeg` | Google WebP gallery image                 |\n| `sample-jfif.jfif` | Google WebP gallery image                 |\n| `sample-gif.gif`   | Wikimedia, Newton's cradle animation      |\n| `sample-webp.webp` | Google WebP gallery image                 |\n| `sample-avif.avif` | link-u/avif-sample-images, fox image      |\n| `sample-bmp.bmp`   | filesamples.com                           |\n| `sample-ico.ico`   | python.org favicon                        |\n| `sample-svg.svg`   | Wikimedia, SVG logo                       |\n| `sample-mp4.mp4`   | test-videos.co.uk, Big Buck Bunny sample  |\n", "metadata": {"File": "test.md", "File size": "5,750 bytes"}}, {"type": "image", "name": "text.pdf", "comment": "", "metadata": {"File": "text.pdf", "File size": "80,097 bytes"}}];
-const images = entries.filter(e => e.type === 'image');
+let entries = [{"type": "image", "name": "175-signal-2024-09-21-153424_002.mp4", "comment": "", "metadata": {"File": "175-signal-2024-09-21-153424_002.mp4", "File size": "2,094,693 bytes"}}, {"type": "image", "name": "190-signal-2024-09-24-193554_002.png", "comment": "", "metadata": {"File": "190-signal-2024-09-24-193554_002.png", "File size": "46,758 bytes"}}, {"type": "image", "name": "sample-apng.apng", "comment": "", "metadata": {"File": "sample-apng.apng", "File size": "61,968 bytes"}}, {"type": "image", "name": "sample-avif.avif", "comment": "", "metadata": {"File": "sample-avif.avif", "File size": "80,743 bytes"}}, {"type": "image", "name": "sample-bmp.bmp", "comment": "", "metadata": {"File": "sample-bmp.bmp", "File size": "818,058 bytes"}}, {"type": "image", "name": "sample-gif.gif", "comment": "", "metadata": {"File": "sample-gif.gif", "File size": "308,156 bytes"}}, {"type": "image", "name": "sample-ico.ico", "comment": "", "metadata": {"File": "sample-ico.ico", "File size": "15,086 bytes"}}, {"type": "image", "name": "sample-jfif.jfif", "comment": "", "metadata": {"File": "sample-jfif.jfif", "File size": "88,316 bytes"}}, {"type": "image", "name": "sample-jpeg.jpeg", "comment": "", "metadata": {"File": "sample-jpeg.jpeg", "File size": "257,056 bytes"}}, {"type": "image", "name": "sample-jpg.jpg", "comment": "", "metadata": {"File": "sample-jpg.jpg", "File size": "36,287 bytes"}}, {"type": "image", "name": "sample-mp4.mp4", "comment": "", "metadata": {"File": "sample-mp4.mp4", "File size": "991,017 bytes"}}, {"type": "image", "name": "sample-png.png", "comment": "", "metadata": {"File": "sample-png.png", "File size": "224,566 bytes"}}, {"type": "image", "name": "sample-svg.svg", "comment": "", "metadata": {"File": "sample-svg.svg", "File size": "4,019 bytes"}}, {"type": "image", "name": "sample-webp.webp", "comment": "", "metadata": {"File": "sample-webp.webp", "File size": "30,320 bytes"}}, {"type": "image", "name": "test.md", "comment": "", "markdown": "# Slideshow Generator\n\nGenerate and browse an ordered slideshow from image, video, and document files in a project's `slides/` folder. The generator maintains a Markdown slide list, an editable browser view, and a standalone read-only view.\n\n## Requirements\n\n- Python 3. No third-party Python packages are needed for generation or serving.\n- A modern web browser to view the slideshow. Actual playback depends on browser support for the selected media format and codec.\n- Optional: [Pillow](https://python-pillow.org/) for image dimensions and EXIF metadata.\n- Optional: `ffmpeg` and `ffprobe` on `PATH` to check and re-encode MP4 video codecs.\n\n```mermaid\nflowchart LR\nA --> B\nB --> C\nA --> C\n```\n\n## Project Layout\n\nRun the script from a project folder containing `slides/`:\n\n```text\nmy-slideshow/\n\u251c\u2500\u2500 generate_slideshow.py\n\u251c\u2500\u2500 slides.md (generated by the script)\n\u251c\u2500\u2500 slideshow-gen.html (generated and used by the script)\n\u2514\u2500\u2500 slides/\n    \u251c\u2500\u2500 photo.jpg\n    \u251c\u2500\u2500 clip.mp4\n    \u2514\u2500\u2500 index.html (generated by the script)\n```\n\nPut media directly in `slides/`; files in nested folders are not scanned. The generator does not create this folder, so create it before the first run. It recognizes these filename extensions (case-insensitive):\n\n**Images:** `.png`, `.apng`, `.jpg`, `.jpeg`, `.jfif`, `.gif`, `.webp`, `.avif`, `.bmp`, `.ico`, `.svg`  \n**Video:** `.mp4`\u003cbr>\n**Documents:** `.pdf`, `.md` (`slides.md` is excluded)\n\nPDFs and Markdown files are shown in an embedded browser document view. Extension recognition does not guarantee that every browser can display or play a file. For widest MP4 browser compatibility, use H.264 video and AAC audio.\n\n## Generate and View\n\nFrom the project folder, run:\n\n```console\npython generate_slideshow.py\n```\n\nThe script updates or creates `slides.md`, writes the editable `slideshow-gen.html` in the project folder and writes the read-only `slides/index.html` beside the media. By default it starts a local server at `http://127.0.0.1:8000/slideshow-gen.html` and opens the editable view in your browser. Stop the server with Ctrl+C.\n\nOptions:\n\n```console\npython generate_slideshow.py --help\npython generate_slideshow.py --no-serve\npython generate_slideshow.py --serve-only\npython generate_slideshow.py --dir path/to/project --port 8080\npython generate_slideshow.py --fix-videos\n```\n\n- `--dir DIR`: use a project folder other than the current directory. It must contain `slides/`.\n- `--port PORT`: choose the local HTTP server port (default `8000`).\n- `--no-serve`: generate/update the list and both HTML files, then exit.\n- `--serve-only`: serve existing `slides.md` and `slideshow-gen.html` without regenerating them. The project must also contain `slides/`.\n- `--fix-videos`: before generation/serving, re-encode MP4 files that are not H.264 to H.264/AAC. Requires `ffmpeg` and `ffprobe`; the original is kept as a `.bak` file. Review the backup and converted file before deleting anything.\n\nTo view the standalone, read-only version, open `slides/index.html`. It references the media files next to it, so keep the HTML and its slide files together. The editable page should be used through the local server; its save and ZIP export actions require that server.\n\n## Slide Order and Captions\n\n`slides.md` determines the slide order. On the first run, media files are added in case-insensitive filename order. Subsequent runs preserve listed order and captions, remove entries for files no longer found, and append newly discovered files. Reorder entries in the Markdown file directly or use the editable page's drag-and-drop index.\n\nUse Markdown image lines for slides and headings for section labels:\n\n```markdown\n# First section\n![Opening view](photo.jpg)\n![A short clip](clip.mp4)\n## Details\n![Second view](diagram.svg)\n![Notes](notes.md)\n![Handout](handout.pdf)\n```\n\nCaptions are editable in the index. Separate caption lines with `\u003cbr>` if desired. Clicking **Save Text and Order** writes the edits to `slides.md`; if the file already exists, a timestamped `slides_YYYYMMDD_HHMMSS.md` backup is made first. Other unrecognized lines in `slides.md` are retained but ignored by the slideshow.\n\nThe editable view supports keyboard left/right navigation, zoom and pan for still images, and a ZIP export containing a standalone `index.html` plus the referenced media. The read-only view is suitable for browsing or copying with its media files; it has no save or export controls.\n\n## Sample Media\n\nThe repository's `slides/` folder includes samples for the supported formats. Their sources are listed here; review each source's license and attribution requirements before redistributing the files or publishing a slideshow.\n\n| File               | Source                                    |\n| ------------------ | ----------------------------------------- |\n| `sample-png.png`   | Wikimedia, PNG transparency demonstration |\n| `sample-apng.apng` | Wikimedia, animated beach ball            |\n| `sample-jpg.jpg`   | Wikimedia, JPEG flower example            |\n| `sample-jpeg.jpeg` | Google WebP gallery image                 |\n| `sample-jfif.jfif` | Google WebP gallery image                 |\n| `sample-gif.gif`   | Wikimedia, Newton's cradle animation      |\n| `sample-webp.webp` | Google WebP gallery image                 |\n| `sample-avif.avif` | link-u/avif-sample-images, fox image      |\n| `sample-bmp.bmp`   | filesamples.com                           |\n| `sample-ico.ico`   | python.org favicon                        |\n| `sample-svg.svg`   | Wikimedia, SVG logo                       |\n| `sample-mp4.mp4`   | test-videos.co.uk, Big Buck Bunny sample  |\n", "metadata": {"File": "test.md", "File size": "5,750 bytes"}}, {"type": "image", "name": "text.pdf", "comment": "", "metadata": {"File": "text.pdf", "File size": "80,097 bytes"}}];
+let images = entries.filter(e => e.type === 'image');
 let current = 0;
+let dragSrcIndex = null;
 
 const viewer = document.getElementById('viewer');
 const caption = document.getElementById('caption');
@@ -92,6 +107,7 @@ const metadataBtn = document.getElementById('metadataBtn');
 const metadataDialog = document.getElementById('metadataDialog');
 const metadataList = document.getElementById('metadataList');
 const metadataEmpty = document.getElementById('metadataEmpty');
+const saveStatus = document.getElementById('saveStatus');
 let zoomTarget = null;
 let zoomScale = 1;
 let panX = 0;
@@ -233,6 +249,13 @@ viewer.addEventListener('pointerup', endPan);
 viewer.addEventListener('pointercancel', endPan);
 
 function showImage(i) {
+  if (!images.length) {
+    current = 0;
+    viewer.replaceChildren();
+    resetZoom();
+    caption.textContent = 'No media files found';
+    return;
+  }
   current = (i + images.length) % images.length;
   viewer.replaceChildren();
   const entry = images[current];
@@ -276,6 +299,8 @@ function renderThumbs() {
     const idx = imageIndex++;
     const item = document.createElement('div');
     item.className = 'thumb';
+    item.draggable = true;
+    item.dataset.index = idx;
 
     const num = document.createElement('span');
     num.className = 'num';
@@ -292,15 +317,48 @@ function renderThumbs() {
       img.loading = 'lazy';
     }
 
-    const nameEl = document.createElement('span');
+    const nameEl = document.createElement('input');
     nameEl.className = 'name';
-    nameEl.textContent = displayName(entry);
+    nameEl.type = 'text';
+    nameEl.value = displayName(entry);
     nameEl.title = entry.name;
+    nameEl.addEventListener('click', (e) => e.stopPropagation());
+    nameEl.addEventListener('dragstart', (e) => e.stopPropagation());
+    nameEl.addEventListener('change', () => {
+      const value = nameEl.value.trim();
+      entry.comment = (value === entry.name) ? '' : value;
+      if (current === idx) updateCaption(entry);
+      saveStatus.textContent = 'Comment changed (not saved yet)';
+    });
 
     item.appendChild(num);
     item.appendChild(img);
     item.appendChild(nameEl);
+
     item.addEventListener('click', () => showImage(idx));
+
+    item.addEventListener('dragstart', (e) => {
+      dragSrcIndex = idx;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragend', () => item.classList.remove('dragging'));
+    item.addEventListener('dragover', (e) => e.preventDefault());
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const targetIndex = idx;
+      if (dragSrcIndex === null || dragSrcIndex === targetIndex) return;
+      const activeEntry = images[current];
+      const [moved] = images.splice(dragSrcIndex, 1);
+      images.splice(targetIndex, 0, moved);
+      let imageCursor = 0;
+      entries = entries.map((entry) => entry.type === 'subtitle' ? entry : images[imageCursor++]);
+      dragSrcIndex = null;
+      renderThumbs();
+      const newCurrent = images.indexOf(activeEntry);
+      showImage(newCurrent >= 0 ? newCurrent : 0);
+      saveStatus.textContent = 'Order changed (not saved yet)';
+    });
 
     thumbsEl.appendChild(item);
   });
@@ -334,6 +392,66 @@ document.addEventListener('mouseup', () => {
   resizing = false;
   resizer.classList.remove('resizing');
   document.body.style.userSelect = '';
+});
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  saveStatus.textContent = 'Saving...';
+  try {
+    const res = await fetch('/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    saveStatus.textContent = 'Saved to slides.md';
+  } catch (err) {
+    saveStatus.textContent = 'Save failed: ' + err.message;
+  }
+});
+
+document.getElementById('reloadBtn').addEventListener('click', async () => {
+  const currentName = images[current]?.name;
+  saveStatus.textContent = 'Reloading media files...';
+  try {
+    const res = await fetch('/reload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    entries = await res.json();
+    images = entries.filter((entry) => entry.type === 'image');
+    renderThumbs();
+    const currentIndex = images.findIndex((entry) => entry.name === currentName);
+    showImage(currentIndex >= 0 ? currentIndex : Math.min(current, images.length - 1));
+    saveStatus.textContent = `Reloaded ${images.length} media files`;
+  } catch (err) {
+    saveStatus.textContent = 'Reload failed: ' + err.message;
+  }
+});
+
+document.getElementById('exportBtn').addEventListener('click', async () => {
+  saveStatus.textContent = 'Exporting...';
+  try {
+    const res = await fetch('/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'slideshow_export.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    saveStatus.textContent = 'Exported slideshow_export.zip';
+  } catch (err) {
+    saveStatus.textContent = 'Export failed: ' + err.message;
+  }
 });
 
 renderThumbs();

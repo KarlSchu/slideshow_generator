@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 """
-Builds/updates images.md (a Markdown file: '# ' / '## ' lines are section
+Builds/updates slides.md (a Markdown file: '# ' / '## ' lines are section
 headings, '![alt](file)' lines are images/videos in slideshow order, and any
 other line is ignored) from the media files in the 'slides' subfolder and
-generates slideshow-gen.html (editable, next to images.md) and
-slides/slideshow.html (read-only, next to the media). Serves the files over
+generates slideshow-gen.html (editable, next to slides.md) and
+slides/index.html (read-only, next to the media). Serves the files over
 HTTP so the editable slideshow's drag-to-reorder index can save the new
-order/captions back into images.md.
+order/captions back into slides.md.
 
-Supported media: png, apng, jpg, jpeg, jfif, gif, webp, avif, bmp, ico, svg, mp4.
+Supported media: png, apng, jpg, jpeg, jfif, gif, webp, avif, bmp, ico, svg,
+mp4, pdf, md (except slides.md).
 
 Usage:
     python3 generate_slideshow.py [--dir DIR] [--port PORT] [--no-serve] [--fix-videos]
 
     --dir DIR      Project directory containing the 'slides' folder (default: current directory)
     --port PORT    Port for the local editing server (default: 8000)
-    --no-serve     Only (re)generate images.md, slideshow-gen.html, and slideshow.html; don't start the server
-    --serve-only   Start the server using the existing images.md/slideshow-gen.html without regenerating them
+    --no-serve     Only (re)generate slides.md, slideshow-gen.html, and index.html; don't start the server
+    --serve-only   Start the server using the existing slides.md/slideshow-gen.html without regenerating them
     --fix-videos   Re-encode any .mp4 with a non-H.264 video codec to H.264/AAC with faststart (requires ffmpeg/ffprobe)
 """
 
 """
 Tasks:
 - [x] make the image decription in the main pane multi line if to long or <br/> in the description. Make only one vertical scrollbar
-- [x] in generator scripts rename the slideshow.html to slideshow-gen.html for the editable version and slideshow.html for the read only and exported version
-- [x] in "Save Texts and Order" create a backup of images.md as images_TIMESTAMP.md if images.md already exists
+- [x] use slideshow-gen.html for the editable view and index.html for the read-only and exported view
+- [x] back up slides.md as slides_TIMESTAMP.md when saving if it already exists
 - [ ] add support for video metadata (duration, codec, etc.)
 - [x] video transformation `ffmpeg -y -i "036-dynamic-scuteniering-2924-09-20.mp4" -c:v libx264 -profile:v high -pix_fmt yuv420p -c:a aac -b:a 192k "036-dynamic-scuteniering-2924-09-20_h264.mp4"`
 """
@@ -44,11 +45,12 @@ import zipfile
 
 IMAGE_EXTS = {".png", ".apng", ".jpg", ".jpeg", ".jfif", ".gif", ".webp", ".avif", ".bmp", ".ico", ".svg"}
 VIDEO_EXTS = {".mp4"}
-MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
+DOCUMENT_EXTS = {".pdf", ".md"}
+MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS | DOCUMENT_EXTS
 SLIDES_DIRNAME = "slides"
-LIST_FILENAME = "images.md"
+LIST_FILENAME = "slides.md"
+EDITABLE_HTML_FILENAME = "index.html"
 HTML_FILENAME = "slideshow.html"
-EDITABLE_HTML_FILENAME = "slideshow-gen.html"
 IMAGE_LINE_RE = re.compile(r"^!\[(?P<alt>.*)\]\(\s*(?P<name>.+?)\s*\)\s*$")
 
 
@@ -58,7 +60,7 @@ def find_images(directory):
         path = os.path.join(directory, entry)
         if not os.path.isfile(path):
             continue
-        if os.path.splitext(entry)[1].lower() in MEDIA_EXTS:
+        if entry.lower() != LIST_FILENAME.lower() and os.path.splitext(entry)[1].lower() in MEDIA_EXTS:
             names.append(entry)
     return sorted(names, key=str.lower)
 
@@ -146,7 +148,7 @@ def format_image_line(name, comment):
 
 def line_to_entry(line):
     """Converts a line to a slideshow entry dict, or None if the line should
-    be ignored (anything that isn't a heading or an image/video line)."""
+    be ignored (anything that isn't a heading or a media line)."""
     if is_heading(line):
         stripped = line.lstrip("#")
         level = len(line) - len(stripped)
@@ -158,7 +160,7 @@ def line_to_entry(line):
     return {"type": "image", "name": name, "comment": comment}
 
 
-def add_image_metadata(directory, entries):
+def enrich_media_entries(directory, entries):
     try:
         from PIL import ExifTags, Image
     except ImportError:
@@ -173,7 +175,10 @@ def add_image_metadata(directory, entries):
             metadata = {"File": entry["name"]}
             if os.path.isfile(path):
                 metadata["File size"] = f"{os.path.getsize(path):,} bytes"
-                if Image is not None:
+                if os.path.splitext(entry["name"])[1].lower() == ".md":
+                    with open(path, "r", encoding="utf-8") as markdown_file:
+                        enriched["markdown"] = markdown_file.read()
+                elif Image is not None:
                     try:
                         with Image.open(path) as image:
                             metadata["Format"] = image.format or "Unknown"
@@ -202,26 +207,23 @@ def entry_to_line(entry):
 
 
 def merge_save_lines(existing_lines, clean_entries):
-    """Rebuilds images.md lines for a save: each heading/image line slot keeps
-    its original position but gets the (possibly reordered/edited) content
-    from clean_entries, while any other line is left completely untouched.
-    Falls back to just the new entries if the recognized line count doesn't
-    match (e.g. the file changed on disk since the page was loaded)."""
-    recognized_positions = [
-        i for i, line in enumerate(existing_lines)
-        if is_heading(line) or parse_image_line(line) is not None
-    ]
-    if len(recognized_positions) != len(clean_entries):
-        return [entry_to_line(entry) for entry in clean_entries]
-
-    result = list(existing_lines)
-    for pos, entry in zip(recognized_positions, clean_entries):
-        result[pos] = entry_to_line(entry)
+    """Updates heading/media slots in slides.md and preserves other lines.
+    Any extra entries are appended; unused recognized lines are removed."""
+    result = []
+    entry_index = 0
+    for line in existing_lines:
+        if is_heading(line) or parse_image_line(line) is not None:
+            if entry_index < len(clean_entries):
+                result.append(entry_to_line(clean_entries[entry_index]))
+                entry_index += 1
+        else:
+            result.append(line)
+    result.extend(entry_to_line(entry) for entry in clean_entries[entry_index:])
     return result
 
 
 def update_list(directory, slides_dir):
-    """Reads images.md (if present), drops image lines for files that no
+    """Reads slides.md (if present), drops media lines for files that no
     longer exist in slides_dir, appends new media files found there, and
     rewrites the file - the line order determines the slideshow order.
     Headings and any other non-image lines are preserved as-is; unrecognized
@@ -263,6 +265,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   #main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; min-width: 0; min-height: 0; }
   #viewer { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; width: 95%; min-height: 0; overflow: hidden; touch-action: none; }
   #viewer img, #viewer video { display: block; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 20px rgba(0,0,0,.6); transform-origin: center; }
+  #viewer iframe { flex: 1; width: 100%; height: 100%; border: 0; background: #fff; }
   #caption { flex: 0 0 auto; max-width: 95%; margin: 10px 0; font-size: 14px; opacity: .8; overflow-wrap: anywhere; text-align: center; }
   .zoom-controls { position: absolute; top: 16px; right: 16px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 5px; background: rgba(17,17,17,.9); border: 1px solid #444; border-radius: 4px; }
   .zoom-controls[hidden] { display: none; }
@@ -290,8 +293,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   #indexHeader { position: sticky; top: -10px; z-index: 2; background: #111; margin: -10px -10px 0; padding: 10px 10px 0; }
   #saveBtn { width: 100%; padding: 8px; margin-bottom: 10px; background: #2d6cdf; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
   #saveBtn:hover { background: #1e56b8; }
-  #exportBtn { width: 100%; padding: 8px; margin-bottom: 10px; background: #3a3a3a; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-  #exportBtn:hover { background: #505050; }
+  #reloadBtn, #exportBtn { width: 100%; padding: 8px; margin-bottom: 10px; background: #3a3a3a; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  #reloadBtn:hover, #exportBtn:hover { background: #505050; }
   #saveStatus { font-size: 12px; min-height: 16px; margin-bottom: 8px; opacity: .8; }
   .thumb { display: flex; align-items: center; gap: 8px; padding: 4px; margin-bottom: 4px; background: #1c1c1c; border-radius: 4px; cursor: grab; border: 2px solid transparent; }
   .thumb.active { border-color: #2d6cdf; }
@@ -330,8 +333,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div id="index">
     <div id="indexHeader">
       <h3>Index (drag to reorder)</h3>
+      <button id="reloadBtn" type="button">Reload Media Files</button>
       <button id="saveBtn">Save Text and Order</button>
-      <button id="exportBtn">Export ZIP (static + images)</button>
+      <button id="exportBtn">Export ZIP (static + media)</button>
       <div id="saveStatus"></div>
     </div>
     <div id="thumbs"></div>
@@ -341,6 +345,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 const MEDIA_BASE = __MEDIA_BASE__;
 const VIDEO_EXTS = __VIDEO_EXTS__;
 const isVideoName = (name) => VIDEO_EXTS.some((ext) => name.toLowerCase().endsWith(ext));
+const isDocumentName = (name) => /\\.(pdf|md)$/i.test(name);
 const mediaSrc = (name) => MEDIA_BASE + encodeURIComponent(name);
 let entries = __IMAGES_JSON__;
 let images = entries.filter(e => e.type === 'image');
@@ -369,6 +374,18 @@ let panStartY = 0;
 
 function displayName(entry) {
   return entry.comment ? entry.comment : entry.name;
+}
+
+function markdownDocument(text) {
+  const escaped = text.replace(/[&<>]/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;'
+  })[char]);
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    body { margin: 0; padding: 16px; color: #000; background: #fff; font: 14px/1.5 system-ui, sans-serif; }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style></head><body><pre>${escaped}</pre></body></html>`;
 }
 
 function updateCaption(entry) {
@@ -488,13 +505,30 @@ viewer.addEventListener('pointerup', endPan);
 viewer.addEventListener('pointercancel', endPan);
 
 function showImage(i) {
+  if (!images.length) {
+    current = 0;
+    viewer.replaceChildren();
+    resetZoom();
+    caption.textContent = 'No media files found';
+    return;
+  }
   current = (i + images.length) % images.length;
   viewer.replaceChildren();
   const entry = images[current];
   const isVideo = isVideoName(entry.name);
-  const media = document.createElement(isVideo ? 'video' : 'img');
-  media.src = mediaSrc(entry.name);
-  media.alt = entry.name;
+  const media = document.createElement(isVideo ? 'video' : isDocumentName(entry.name) ? 'iframe' : 'img');
+  if (media.tagName === 'IFRAME') {
+    media.title = entry.name;
+    if (entry.name.toLowerCase().endsWith('.md')) {
+      media.setAttribute('sandbox', '');
+      media.srcdoc = markdownDocument(entry.markdown || '');
+    } else {
+      media.src = mediaSrc(entry.name);
+    }
+  } else {
+    media.src = mediaSrc(entry.name);
+    media.alt = entry.name;
+  }
   if (isVideo) {
     media.controls = true;
     media.autoplay = true;
@@ -529,10 +563,10 @@ function renderThumbs() {
     num.textContent = (idx + 1) + '.';
 
     let img;
-    if (isVideoName(entry.name)) {
+    if (isVideoName(entry.name) || isDocumentName(entry.name)) {
       img = document.createElement('div');
       img.className = 'thumb-icon';
-      img.textContent = '🎬';
+      img.textContent = isVideoName(entry.name) ? '🎬' : entry.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'MD';
     } else {
       img = document.createElement('img');
       img.src = mediaSrc(entry.name);
@@ -625,9 +659,30 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
       body: JSON.stringify({ entries })
     });
     if (!res.ok) throw new Error(await res.text());
-    saveStatus.textContent = 'Saved to images.md';
+    saveStatus.textContent = 'Saved to slides.md';
   } catch (err) {
     saveStatus.textContent = 'Save failed: ' + err.message;
+  }
+});
+
+document.getElementById('reloadBtn').addEventListener('click', async () => {
+  const currentName = images[current]?.name;
+  saveStatus.textContent = 'Reloading media files...';
+  try {
+    const res = await fetch('/reload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    entries = await res.json();
+    images = entries.filter((entry) => entry.type === 'image');
+    renderThumbs();
+    const currentIndex = images.findIndex((entry) => entry.name === currentName);
+    showImage(currentIndex >= 0 ? currentIndex : Math.min(current, images.length - 1));
+    saveStatus.textContent = `Reloaded ${images.length} media files`;
+  } catch (err) {
+    saveStatus.textContent = 'Reload failed: ' + err.message;
   }
 });
 
@@ -674,6 +729,7 @@ STATIC_EXPORT_TEMPLATE = """<!DOCTYPE html>
   #main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; min-width: 0; min-height: 0; }
   #viewer { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; width: 95%; min-height: 0; overflow: hidden; touch-action: none; }
   #viewer img, #viewer video { display: block; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 20px rgba(0,0,0,.6); transform-origin: center; }
+  #viewer iframe { flex: 1; width: 100%; height: 100%; border: 0; background: #fff; }
   #caption { flex: 0 0 auto; max-width: 95%; margin: 10px 0; font-size: 14px; opacity: .8; overflow-wrap: anywhere; text-align: center; }
   .zoom-controls { position: absolute; top: 16px; right: 16px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 5px; background: rgba(17,17,17,.9); border: 1px solid #444; border-radius: 4px; }
   .zoom-controls[hidden] { display: none; }
@@ -739,6 +795,7 @@ STATIC_EXPORT_TEMPLATE = """<!DOCTYPE html>
 const MEDIA_BASE = __MEDIA_BASE__;
 const VIDEO_EXTS = __VIDEO_EXTS__;
 const isVideoName = (name) => VIDEO_EXTS.some((ext) => name.toLowerCase().endsWith(ext));
+const isDocumentName = (name) => /\\.(pdf|md)$/i.test(name);
 const mediaSrc = (name) => MEDIA_BASE + encodeURIComponent(name);
 const entries = __IMAGES_JSON__;
 const images = entries.filter(e => e.type === 'image');
@@ -765,6 +822,18 @@ let panStartY = 0;
 
 function displayName(entry) {
   return entry.comment ? entry.comment : entry.name;
+}
+
+function markdownDocument(text) {
+  const escaped = text.replace(/[&<>]/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;'
+  })[char]);
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    body { margin: 0; padding: 16px; color: #000; background: #fff; font: 14px/1.5 system-ui, sans-serif; }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style></head><body><pre>${escaped}</pre></body></html>`;
 }
 
 function updateCaption(entry) {
@@ -888,9 +957,19 @@ function showImage(i) {
   viewer.replaceChildren();
   const entry = images[current];
   const isVideo = isVideoName(entry.name);
-  const media = document.createElement(isVideo ? 'video' : 'img');
-  media.src = mediaSrc(entry.name);
-  media.alt = entry.name;
+  const media = document.createElement(isVideo ? 'video' : isDocumentName(entry.name) ? 'iframe' : 'img');
+  if (media.tagName === 'IFRAME') {
+    media.title = entry.name;
+    if (entry.name.toLowerCase().endsWith('.md')) {
+      media.setAttribute('sandbox', '');
+      media.srcdoc = markdownDocument(entry.markdown || '');
+    } else {
+      media.src = mediaSrc(entry.name);
+    }
+  } else {
+    media.src = mediaSrc(entry.name);
+    media.alt = entry.name;
+  }
   if (isVideo) {
     media.controls = true;
     media.autoplay = true;
@@ -923,10 +1002,10 @@ function renderThumbs() {
     num.textContent = (idx + 1) + '.';
 
     let img;
-    if (isVideoName(entry.name)) {
+    if (isVideoName(entry.name) || isDocumentName(entry.name)) {
       img = document.createElement('div');
       img.className = 'thumb-icon';
-      img.textContent = '🎬';
+      img.textContent = isVideoName(entry.name) ? '🎬' : entry.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'MD';
     } else {
       img = document.createElement('img');
       img.src = mediaSrc(entry.name);
@@ -989,12 +1068,12 @@ def render_template(template, entries, media_base):
     return (template
             .replace("__MEDIA_BASE__", json.dumps(media_base))
             .replace("__VIDEO_EXTS__", json.dumps(sorted(VIDEO_EXTS)))
-            .replace("__IMAGES_JSON__", json.dumps(entries)))
+            .replace("__IMAGES_JSON__", json.dumps(entries).replace("<", "\\u003c")))
 
 
 def generate_html(directory, slides_dir, lines):
     entries = [entry for entry in (line_to_entry(line) for line in lines) if entry is not None]
-    entries = add_image_metadata(slides_dir, entries)
+    entries = enrich_media_entries(slides_dir, entries)
     html = render_template(HTML_TEMPLATE, entries, SLIDES_DIRNAME + "/")
     html_path = os.path.join(directory, EDITABLE_HTML_FILENAME)
     with open(html_path, "w", encoding="utf-8") as f:
@@ -1008,7 +1087,7 @@ def generate_static_export_html(entries):
 
 
 def generate_static_html(slides_dir, entries):
-    entries = add_image_metadata(slides_dir, entries)
+    entries = enrich_media_entries(slides_dir, entries)
     html_path = os.path.join(slides_dir, HTML_FILENAME)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(generate_static_export_html(entries))
@@ -1025,7 +1104,7 @@ def make_handler(directory, slides_dir):
         def log_message(self, fmt, *args):
             pass
 
-        def _parse_entries(self, raw_entries, on_disk):
+        def _parse_entries(self, raw_entries, on_disk, allow_empty=False):
             """Validates posted entries, returning (clean_entries, image_names_used)."""
             if not isinstance(raw_entries, list):
                 raise ValueError("entries must be a list")
@@ -1048,12 +1127,12 @@ def make_handler(directory, slides_dir):
                     image_names.append(name)
                 else:
                     raise ValueError("invalid entry type")
-            if not image_names:
+            if not image_names and not allow_empty:
                 raise ValueError("no valid image names provided")
             return clean, image_names
 
         def do_POST(self):
-            if self.path not in ("/save", "/export"):
+            if self.path not in ("/save", "/export", "/reload"):
                 self.send_error(404, "Not found")
                 return
             length = int(self.headers.get("Content-Length", 0))
@@ -1061,7 +1140,9 @@ def make_handler(directory, slides_dir):
             try:
                 data = json.loads(body)
                 on_disk = set(find_images(slides_dir))
-                clean_entries, image_names = self._parse_entries(data.get("entries"), on_disk)
+                clean_entries, image_names = self._parse_entries(
+                    data.get("entries"), on_disk, allow_empty=self.path == "/reload"
+                )
             except Exception as exc:
                 self.send_response(400)
                 self.send_header("Content-Type", "text/plain")
@@ -1069,10 +1150,25 @@ def make_handler(directory, slides_dir):
                 self.wfile.write(str(exc).encode("utf-8"))
                 return
 
+            if self.path == "/reload":
+                existing_names = {entry["name"] for entry in clean_entries if entry["type"] == "image"}
+                clean_entries.extend(
+                    {"type": "image", "name": name, "comment": ""}
+                    for name in find_images(slides_dir)
+                    if name not in existing_names
+                )
+                response = json.dumps(enrich_media_entries(slides_dir, clean_entries)).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+                return
+
             if self.path == "/save":
                 if os.path.exists(list_path):
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    backup_path = os.path.join(directory, f"images_{timestamp}.md")
+                    backup_path = os.path.join(directory, f"slides_{timestamp}.md")
                     shutil.copy2(list_path, backup_path)
                 lines = merge_save_lines(read_list(list_path), clean_entries)
                 write_list(list_path, lines)
@@ -1083,7 +1179,7 @@ def make_handler(directory, slides_dir):
                 return
 
             # /export: bundle a dependency-free viewer with the referenced media files.
-            static_html = generate_static_export_html(add_image_metadata(slides_dir, clean_entries))
+            static_html = generate_static_export_html(enrich_media_entries(slides_dir, clean_entries))
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr(HTML_FILENAME, static_html)
@@ -1117,8 +1213,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", default=".", help=f"Project directory containing the '{SLIDES_DIRNAME}' media folder (default: current directory)")
     parser.add_argument("--port", type=int, default=8000, help="Port for the local server (default: 8000)")
-    parser.add_argument("--no-serve", action="store_true", help="Only generate images.md, slideshow-gen.html, and slideshow.html")
-    parser.add_argument("--serve-only", action="store_true", help="Start the server using existing images.md and slideshow-gen.html without regenerating them")
+    parser.add_argument("--no-serve", action="store_true", help="Only generate slides.md, slideshow-gen.html, and index.html")
+    parser.add_argument("--serve-only", action="store_true", help="Start the server using existing slides.md and slideshow-gen.html without regenerating them")
     parser.add_argument("--fix-videos", action="store_true", help="Re-encode any .mp4 whose video codec isn't H.264 (e.g. old mpeg4/DivX clips that play audio only in browsers) to H.264/AAC in place, keeping a .bak backup. Requires ffmpeg/ffprobe.")
     args = parser.parse_args()
 
@@ -1145,7 +1241,7 @@ def main():
         entries = [entry for entry in (line_to_entry(line) for line in images) if entry is not None]
         editable_html_path = generate_html(directory, slides_dir, images)
         readonly_html_path = generate_static_html(slides_dir, entries)
-        print(f"Wrote {os.path.join(directory, LIST_FILENAME)} ({len(images)} images)")
+        print(f"Wrote {os.path.join(directory, LIST_FILENAME)} ({len(images)} slides)")
         print(f"Wrote {editable_html_path}")
         print(f"Wrote {readonly_html_path}")
 

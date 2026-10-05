@@ -9,6 +9,13 @@ Generate and browse an ordered slideshow from image, video, and document files i
 - Optional: [Pillow](https://python-pillow.org/) for image dimensions and EXIF metadata.
 - Optional: `ffmpeg` and `ffprobe` on `PATH` to check and re-encode MP4 video codecs.
 
+```mermaid
+flowchart LR
+A --> B
+B --> C
+A --> C
+```
+
 ## Project Layout
 
 Run the script from a project folder containing `slides/`:
@@ -78,7 +85,7 @@ Use Markdown image lines for slides and headings for section labels:
 
 Captions are editable in the index. Separate caption lines with `<br>` if desired. Clicking **Save Text and Order** writes the edits to `slides.md`; if the file already exists, a timestamped `slides_YYYYMMDD_HHMMSS.md` backup is made first. Other unrecognized lines in `slides.md` are retained but ignored by the slideshow.
 
-The editable view supports keyboard left/right navigation, zoom and pan for still images, a **Reload Media Files** button to discover files added to `slides/` while it is open, and a ZIP export containing a standalone `index.html` plus the referenced media. Reloading preserves the current order and captions for files still on disk and appends newly discovered files; use **Save Text and Order** to save the refreshed list. The read-only view is suitable for browsing or copying with its media files; it has no save or export controls.
+The editable view supports keyboard left/right navigation, zoom and pan for still images, and a ZIP export containing a standalone `index.html` plus the referenced media. The read-only view is suitable for browsing or copying with its media files; it has no save or export controls.
 
 ## Sample Media
 
